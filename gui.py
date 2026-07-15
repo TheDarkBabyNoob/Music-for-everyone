@@ -1,7 +1,7 @@
-import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
 
+import customtkinter as ctk
 import numpy as np
 from music21.stream import Score
 
@@ -10,92 +10,175 @@ from transcriber.notation import events_to_stream, export_musicxml
 from transcriber.pitch_detection import detect_notes
 
 
+ctk.set_appearance_mode("system")
+ctk.set_default_color_theme("blue")
+
+
 class SheetMusicApp:
     def __init__(self) -> None:
-        self.root = tk.Tk()
+        self.root = ctk.CTk()
         self.root.title("Music for Everyone — Audio to Sheet Music")
-        self.root.geometry("480x420")
+        self.root.geometry("460x600")
         self.root.resizable(True, True)
 
         self.audio: np.ndarray | None = None
         self.sample_rate: int | None = None
         self.score: Score | None = None
 
-        self.duration_var = tk.StringVar(value="8")
-        self.bpm_var = tk.StringVar(value="120")
-        self.instrument_var = tk.StringVar(value="Concert Pitch")
-        self.status_var = tk.StringVar(value="Load or record audio to begin.")
+        self.duration_var = ctk.StringVar(value="8")
+        self.bpm_var = ctk.StringVar(value="120")
+        self.instrument_var = ctk.StringVar(value="Concert Pitch")
+        self.status_var = ctk.StringVar(value="Load or record audio to begin.")
 
         self._build_widgets()
         self.root.update_idletasks()
         self.root.minsize(self.root.winfo_reqwidth(), self.root.winfo_reqheight())
 
     def _build_widgets(self) -> None:
-        main = ttk.Frame(self.root, padding=18)
-        main.grid(row=0, column=0, sticky="nsew")
+        main = ctk.CTkFrame(self.root, fg_color="transparent")
+        main.grid(row=0, column=0, sticky="nsew", padx=24, pady=24)
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main.columnconfigure(1, weight=1)
+        main.columnconfigure(0, weight=1)
 
-        ttk.Label(main, text="Duration (seconds)").grid(row=0, column=0, sticky="w")
-        duration_entry = ttk.Entry(main, textvariable=self.duration_var, width=10)
-        duration_entry.grid(row=0, column=1, sticky="w", padx=(12, 0))
-
-        self.record_button = ttk.Button(
+        title_label = ctk.CTkLabel(
             main,
+            text="Music for Everyone",
+            font=ctk.CTkFont(size=22, weight="bold"),
+        )
+        title_label.grid(row=0, column=0, sticky="w")
+
+        subtitle_label = ctk.CTkLabel(
+            main,
+            text="Audio to Sheet Music",
+            font=ctk.CTkFont(size=13),
+            text_color=("gray35", "gray70"),
+        )
+        subtitle_label.grid(row=1, column=0, sticky="w", pady=(2, 22))
+
+        audio_card = ctk.CTkFrame(main, corner_radius=12, fg_color=("gray90", "gray17"))
+        audio_card.grid(row=2, column=0, sticky="ew")
+        audio_card.columnconfigure(2, weight=1)
+
+        audio_heading = ctk.CTkLabel(
+            audio_card,
+            text="Audio Source",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        )
+        audio_heading.grid(row=0, column=0, columnspan=3, sticky="w", padx=18, pady=(16, 12))
+
+        ctk.CTkLabel(audio_card, text="Duration (sec)").grid(
+            row=1,
+            column=0,
+            sticky="w",
+            padx=(18, 10),
+            pady=(0, 14),
+        )
+        duration_entry = ctk.CTkEntry(audio_card, textvariable=self.duration_var, width=64)
+        duration_entry.grid(row=1, column=1, sticky="w", pady=(0, 14))
+
+        self.record_button = ctk.CTkButton(
+            audio_card,
             text="Record from Microphone",
             command=self.record_from_microphone,
         )
-        self.record_button.grid(row=0, column=2, sticky="e", padx=(12, 0))
+        self.record_button.grid(
+            row=1,
+            column=2,
+            sticky="ew",
+            padx=(12, 18),
+            pady=(0, 14),
+        )
 
-        self.load_button = ttk.Button(
-            main,
+        self.load_button = ctk.CTkButton(
+            audio_card,
             text="Load Audio File...",
             command=self.load_audio_file,
+            fg_color="transparent",
+            border_width=2,
+            text_color=("gray10", "gray90"),
         )
-        self.load_button.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(18, 0))
+        self.load_button.grid(
+            row=2,
+            column=0,
+            columnspan=3,
+            sticky="ew",
+            padx=18,
+            pady=(0, 18),
+        )
 
-        ttk.Separator(main).grid(row=2, column=0, columnspan=3, sticky="ew", pady=18)
+        settings_card = ctk.CTkFrame(main, corner_radius=12, fg_color=("gray90", "gray17"))
+        settings_card.grid(row=3, column=0, sticky="ew", pady=(18, 0))
+        settings_card.columnconfigure(1, weight=1)
 
-        ttk.Label(main, text="Tempo (BPM)").grid(row=3, column=0, sticky="w")
-        bpm_entry = ttk.Entry(main, textvariable=self.bpm_var, width=10)
-        bpm_entry.grid(row=3, column=1, sticky="w", padx=(12, 0))
+        settings_heading = ctk.CTkLabel(
+            settings_card,
+            text="Settings",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        )
+        settings_heading.grid(row=0, column=0, columnspan=2, sticky="w", padx=18, pady=(16, 12))
 
-        ttk.Label(main, text="Instrument/Key").grid(row=4, column=0, sticky="w", pady=(14, 0))
-        instrument_combo = ttk.Combobox(
-            main,
-            textvariable=self.instrument_var,
-            values=("Concert Pitch", "Bb Trumpet"),
+        ctk.CTkLabel(settings_card, text="Tempo (BPM)").grid(
+            row=1,
+            column=0,
+            sticky="w",
+            padx=(18, 14),
+            pady=(0, 14),
+        )
+        bpm_entry = ctk.CTkEntry(settings_card, textvariable=self.bpm_var, width=84)
+        bpm_entry.grid(row=1, column=1, sticky="w", padx=(0, 18), pady=(0, 14))
+
+        ctk.CTkLabel(settings_card, text="Instrument").grid(
+            row=2,
+            column=0,
+            sticky="w",
+            padx=(18, 14),
+            pady=(0, 18),
+        )
+        instrument_combo = ctk.CTkComboBox(
+            settings_card,
+            variable=self.instrument_var,
+            values=["Concert Pitch", "Bb Trumpet"],
             state="readonly",
-            width=18,
+            width=180,
         )
-        instrument_combo.grid(row=4, column=1, columnspan=2, sticky="w", padx=(12, 0), pady=(14, 0))
+        instrument_combo.grid(row=2, column=1, sticky="w", padx=(0, 18), pady=(0, 18))
 
-        self.transcribe_button = ttk.Button(
+        self.transcribe_button = ctk.CTkButton(
             main,
             text="Transcribe",
             command=self.transcribe,
             state="disabled",
+            height=44,
+            font=ctk.CTkFont(size=14, weight="bold"),
         )
-        self.transcribe_button.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(24, 0))
+        self.transcribe_button.grid(row=4, column=0, sticky="ew", pady=(24, 0))
 
-        self.save_button = ttk.Button(
+        self.save_button = ctk.CTkButton(
             main,
             text="Save Sheet Music...",
             command=self.save_sheet_music,
             state="disabled",
+            fg_color="transparent",
+            border_width=2,
+            text_color=("gray10", "gray90"),
         )
-        self.save_button.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        self.save_button.grid(row=5, column=0, sticky="ew", pady=(12, 0))
 
-        ttk.Separator(main).grid(row=7, column=0, columnspan=3, sticky="ew", pady=18)
+        self.progress_bar = ctk.CTkProgressBar(main, mode="indeterminate")
+        self.progress_bar.grid(row=6, column=0, sticky="ew", pady=(24, 10))
+        self.progress_bar.grid_remove()
 
-        status_label = ttk.Label(
+        status_label = ctk.CTkLabel(
             main,
             textvariable=self.status_var,
-            wraplength=420,
+            wraplength=400,
             justify="left",
+            anchor="w",
+            font=ctk.CTkFont(size=12),
+            text_color=("gray35", "gray70"),
         )
-        status_label.grid(row=8, column=0, columnspan=3, sticky="ew")
+        status_label.grid(row=7, column=0, sticky="ew")
 
     def run(self) -> None:
         self.root.mainloop()
@@ -111,6 +194,8 @@ class SheetMusicApp:
 
         self.record_button.configure(state="disabled")
         self.status_var.set("Recording...")
+        self.progress_bar.grid()
+        self.progress_bar.start()
         self.root.update_idletasks()
 
         try:
@@ -124,6 +209,8 @@ class SheetMusicApp:
             self.status_var.set("Recording failed.")
             messagebox.showerror("Recording Failed", str(exc))
         finally:
+            self.progress_bar.stop()
+            self.progress_bar.grid_remove()
             self.record_button.configure(state="normal")
 
     def load_audio_file(self) -> None:
@@ -158,6 +245,9 @@ class SheetMusicApp:
 
         previous_status = self.status_var.get()
         self.status_var.set("Transcribing...")
+        self.transcribe_button.configure(state="disabled")
+        self.progress_bar.grid()
+        self.progress_bar.start()
         self.root.update_idletasks()
 
         try:
@@ -173,6 +263,11 @@ class SheetMusicApp:
         except Exception as exc:
             self.status_var.set(previous_status)
             messagebox.showerror("Transcription Failed", str(exc))
+        finally:
+            self.progress_bar.stop()
+            self.progress_bar.grid_remove()
+            if self.audio is not None and self.sample_rate is not None:
+                self.transcribe_button.configure(state="normal")
 
     def save_sheet_music(self) -> None:
         if self.score is None:
