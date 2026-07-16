@@ -10,3 +10,7 @@ librosa
 yt-dlp
 imageio-ffmpeg
 requests
+verovio
+svglib
+reportlab
+pymupdf

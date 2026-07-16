@@ -1,3 +1,6 @@
+import io
+import shutil
+import tempfile
 import threading
 from pathlib import Path
 from tkinter import filedialog, messagebox
@@ -5,11 +8,13 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import numpy as np
 from music21.stream import Score
+from PIL import Image
 
 import audio_io
 from transcriber.audio_analysis import estimate_key, estimate_tempo
 from transcriber.notation import events_to_stream, export_musicxml
 from transcriber.pitch_detection import detect_notes
+from transcriber.rendering import render_score
 from transcriber.source_separation import isolate_melody
 from transcriber.url_import import import_from_url
 
@@ -22,13 +27,15 @@ class SheetMusicApp:
     def __init__(self) -> None:
         self.root = ctk.CTk()
         self.root.title("Music for Everyone — Audio to Sheet Music")
-        self.root.geometry("460x600")
+        self.root.geometry("520x900")
         self.root.resizable(True, True)
 
         self.audio: np.ndarray | None = None
         self.sample_rate: int | None = None
         self.score: Score | None = None
         self.detected_key_signature: tuple[str, str] | None = None
+        self.rendered_pdf_path: str | None = None
+        self._preview_ctk_image: ctk.CTkImage | None = None
 
         self.duration_var = ctk.StringVar(value="8")
         self.url_var = ctk.StringVar(value="")
@@ -214,19 +221,54 @@ class SheetMusicApp:
         )
         self.transcribe_button.grid(row=4, column=0, sticky="ew", pady=(24, 0))
 
+        preview_card = ctk.CTkFrame(main, corner_radius=12, fg_color=("gray90", "gray17"))
+        preview_card.grid(row=5, column=0, sticky="ew", pady=(18, 0))
+        preview_card.columnconfigure(0, weight=1)
+
+        self.preview_label = ctk.CTkLabel(
+            preview_card,
+            text="Transcribe audio to see a sheet music preview.",
+            font=ctk.CTkFont(size=12),
+            text_color=("gray45", "gray60"),
+            wraplength=440,
+            justify="center",
+        )
+        self.preview_label.grid(row=0, column=0, padx=18, pady=24)
+
+        self.preview_caption = ctk.CTkLabel(
+            preview_card,
+            text="",
+            font=ctk.CTkFont(size=11),
+            text_color=("gray45", "gray60"),
+        )
+        self.preview_caption.grid(row=1, column=0, padx=18, pady=(0, 14))
+
+        buttons_row = ctk.CTkFrame(main, fg_color="transparent")
+        buttons_row.grid(row=6, column=0, sticky="ew", pady=(18, 0))
+        buttons_row.columnconfigure(0, weight=1)
+        buttons_row.columnconfigure(1, weight=1)
+
         self.save_button = ctk.CTkButton(
-            main,
-            text="Save Sheet Music...",
+            buttons_row,
+            text="Save MusicXML...",
             command=self.save_sheet_music,
             state="disabled",
             fg_color="transparent",
             border_width=2,
             text_color=("gray10", "gray90"),
         )
-        self.save_button.grid(row=5, column=0, sticky="ew", pady=(12, 0))
+        self.save_button.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+
+        self.export_pdf_button = ctk.CTkButton(
+            buttons_row,
+            text="Export PDF...",
+            command=self.export_pdf,
+            state="disabled",
+        )
+        self.export_pdf_button.grid(row=0, column=1, sticky="ew", padx=(6, 0))
 
         self.progress_bar = ctk.CTkProgressBar(main, mode="indeterminate")
-        self.progress_bar.grid(row=6, column=0, sticky="ew", pady=(24, 10))
+        self.progress_bar.grid(row=7, column=0, sticky="ew", pady=(24, 10))
         self.progress_bar.grid_remove()
 
         status_label = ctk.CTkLabel(
@@ -238,7 +280,7 @@ class SheetMusicApp:
             font=ctk.CTkFont(size=12),
             text_color=("gray35", "gray70"),
         )
-        status_label.grid(row=7, column=0, sticky="ew")
+        status_label.grid(row=8, column=0, sticky="ew")
 
     def run(self) -> None:
         self.root.mainloop()
@@ -263,7 +305,10 @@ class SheetMusicApp:
             try:
                 result = work()
             except Exception as exc:
-                self.root.after(0, lambda: self._finish_async(lock_widgets, on_done, None, exc))
+                # Bind exc as a default arg: except-clause variables are
+                # cleared when the block exits, so a plain closure over exc
+                # would see it unbound by the time this lambda actually runs.
+                self.root.after(0, lambda exc=exc: self._finish_async(lock_widgets, on_done, None, exc))
             else:
                 self.root.after(0, lambda: self._finish_async(lock_widgets, on_done, result, None))
 
@@ -430,16 +475,24 @@ class SheetMusicApp:
                 instrument_key=key,
                 key_signature=key_signature,
             )
-            return score, len(events)
+
+            pdf_handle = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+            pdf_handle.close()
+            rendered = render_score(score, pdf_handle.name)
+
+            return score, len(events), rendered
 
         def on_done(result, error) -> None:
             if error is not None:
                 self.status_var.set("Transcription failed.")
                 messagebox.showerror("Transcription Failed", str(error))
                 return
-            score, note_count = result
+            score, note_count, rendered = result
             self.score = score
+            self.rendered_pdf_path = rendered.pdf_path
+            self._display_preview(rendered.preview_png, rendered.page_count)
             self.save_button.configure(state="normal")
+            self.export_pdf_button.configure(state="normal")
             self.status_var.set(f"Transcription complete: detected {note_count} notes.")
 
         status_text = "Isolating melody (this can take a while the first time)..." if isolate else "Transcribing..."
@@ -447,6 +500,21 @@ class SheetMusicApp:
             work, on_done, status_text,
             [self.record_button, self.load_button, self.import_button, self.transcribe_button],
         )
+
+    def _display_preview(self, preview_png: bytes, page_count: int) -> None:
+        image = Image.open(io.BytesIO(preview_png))
+        max_width, max_height = 440, 500
+        scale = min(max_width / image.width, max_height / image.height, 1.0)
+        display_size = (round(image.width * scale), round(image.height * scale))
+
+        self._preview_ctk_image = ctk.CTkImage(
+            light_image=image, dark_image=image, size=display_size
+        )
+        self.preview_label.configure(image=self._preview_ctk_image, text="")
+        if page_count > 1:
+            self.preview_caption.configure(text=f"Page 1 of {page_count} (full score in the exported PDF)")
+        else:
+            self.preview_caption.configure(text="")
 
     def save_sheet_music(self) -> None:
         if self.score is None:
@@ -473,6 +541,29 @@ class SheetMusicApp:
             )
         except Exception as exc:
             messagebox.showerror("Save Failed", str(exc))
+
+    def export_pdf(self) -> None:
+        if self.rendered_pdf_path is None:
+            messagebox.showerror("No Score", "Transcribe audio before exporting a PDF.")
+            return
+
+        path = filedialog.asksaveasfilename(
+            title="Export PDF",
+            defaultextension=".pdf",
+            filetypes=(
+                ("PDF files", "*.pdf"),
+                ("All files", "*.*"),
+            ),
+        )
+        if not path:
+            return
+
+        try:
+            shutil.copyfile(self.rendered_pdf_path, path)
+            self.status_var.set(f"Saved PDF to {path}.")
+            messagebox.showinfo("PDF Exported", f"Saved to {path}")
+        except Exception as exc:
+            messagebox.showerror("Export Failed", str(exc))
 
     def _notation_key(self) -> str:
         if self.instrument_var.get() == "Bb Trumpet":

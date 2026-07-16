@@ -5,3 +5,5 @@ __pycache__/
 *.wav
 *.musicxml
 *.app
+launch.log
+*.pdf

@@ -36,7 +36,11 @@ def events_to_stream(events: list[NoteEvent], bpm: float = 120.0,
         raise ValueError(f"Unknown instrument_key: {instrument_key!r}")
 
     part = stream.Part()
-    part.append(tempo.MetronomeMark(number=bpm))
+    # Plain text rather than a numeric MetronomeMark: the latter renders its
+    # note-value icon using a special embedded music font that our pure-Python
+    # SVG-to-PDF pipeline (svglib/reportlab, no system Cairo/MuseScore) can't
+    # resolve, so it shows up as a solid black box instead of a note glyph.
+    part.append(tempo.MetronomeMark(text=f"Quarter = {bpm:.0f}"))
     part.append(meter.TimeSignature("4/4"))
     if key_signature is not None:
         tonic, mode = key_signature
