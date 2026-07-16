@@ -2,6 +2,7 @@ import io
 import shutil
 import tempfile
 import threading
+import time
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
@@ -27,7 +28,7 @@ class SheetMusicApp:
     def __init__(self) -> None:
         self.root = ctk.CTk()
         self.root.title("Music for Everyone — Audio to Sheet Music")
-        self.root.geometry("520x900")
+        self.root.geometry("1040x740")
         self.root.resizable(True, True)
 
         self.audio: np.ndarray | None = None
@@ -53,24 +54,36 @@ class SheetMusicApp:
         main.grid(row=0, column=0, sticky="nsew", padx=24, pady=24)
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main.columnconfigure(0, weight=1)
+        main.columnconfigure(0, weight=0)
+        main.columnconfigure(1, weight=1)
+        main.rowconfigure(0, weight=1)
+
+        left_column = ctk.CTkFrame(main, fg_color="transparent", width=420)
+        left_column.grid(row=0, column=0, sticky="n")
+        left_column.grid_propagate(False)
+        left_column.columnconfigure(0, weight=1)
+
+        right_column = ctk.CTkFrame(main, fg_color="transparent")
+        right_column.grid(row=0, column=1, sticky="nsew", padx=(24, 0))
+        right_column.columnconfigure(0, weight=1)
+        right_column.rowconfigure(0, weight=1)
 
         title_label = ctk.CTkLabel(
-            main,
+            left_column,
             text="Music for Everyone",
             font=ctk.CTkFont(size=22, weight="bold"),
         )
         title_label.grid(row=0, column=0, sticky="w")
 
         subtitle_label = ctk.CTkLabel(
-            main,
+            left_column,
             text="Audio to Sheet Music",
             font=ctk.CTkFont(size=13),
             text_color=("gray35", "gray70"),
         )
         subtitle_label.grid(row=1, column=0, sticky="w", pady=(2, 22))
 
-        audio_card = ctk.CTkFrame(main, corner_radius=12, fg_color=("gray90", "gray17"))
+        audio_card = ctk.CTkFrame(left_column, corner_radius=12, fg_color=("gray90", "gray17"))
         audio_card.grid(row=2, column=0, sticky="ew")
         audio_card.columnconfigure(2, weight=1)
 
@@ -138,7 +151,7 @@ class SheetMusicApp:
         )
         self.import_button.grid(row=3, column=2, sticky="ew", padx=(0, 18), pady=(0, 18))
 
-        settings_card = ctk.CTkFrame(main, corner_radius=12, fg_color=("gray90", "gray17"))
+        settings_card = ctk.CTkFrame(left_column, corner_radius=12, fg_color=("gray90", "gray17"))
         settings_card.grid(row=3, column=0, sticky="ew", pady=(18, 0))
         settings_card.columnconfigure(1, weight=1)
 
@@ -212,7 +225,7 @@ class SheetMusicApp:
         )
 
         self.transcribe_button = ctk.CTkButton(
-            main,
+            left_column,
             text="Transcribe",
             command=self.transcribe,
             state="disabled",
@@ -221,30 +234,8 @@ class SheetMusicApp:
         )
         self.transcribe_button.grid(row=4, column=0, sticky="ew", pady=(24, 0))
 
-        preview_card = ctk.CTkFrame(main, corner_radius=12, fg_color=("gray90", "gray17"))
-        preview_card.grid(row=5, column=0, sticky="ew", pady=(18, 0))
-        preview_card.columnconfigure(0, weight=1)
-
-        self.preview_label = ctk.CTkLabel(
-            preview_card,
-            text="Transcribe audio to see a sheet music preview.",
-            font=ctk.CTkFont(size=12),
-            text_color=("gray45", "gray60"),
-            wraplength=440,
-            justify="center",
-        )
-        self.preview_label.grid(row=0, column=0, padx=18, pady=24)
-
-        self.preview_caption = ctk.CTkLabel(
-            preview_card,
-            text="",
-            font=ctk.CTkFont(size=11),
-            text_color=("gray45", "gray60"),
-        )
-        self.preview_caption.grid(row=1, column=0, padx=18, pady=(0, 14))
-
-        buttons_row = ctk.CTkFrame(main, fg_color="transparent")
-        buttons_row.grid(row=6, column=0, sticky="ew", pady=(18, 0))
+        buttons_row = ctk.CTkFrame(left_column, fg_color="transparent")
+        buttons_row.grid(row=5, column=0, sticky="ew", pady=(12, 0))
         buttons_row.columnconfigure(0, weight=1)
         buttons_row.columnconfigure(1, weight=1)
 
@@ -267,12 +258,13 @@ class SheetMusicApp:
         )
         self.export_pdf_button.grid(row=0, column=1, sticky="ew", padx=(6, 0))
 
-        self.progress_bar = ctk.CTkProgressBar(main, mode="indeterminate")
-        self.progress_bar.grid(row=7, column=0, sticky="ew", pady=(24, 10))
+        self.progress_bar = ctk.CTkProgressBar(left_column, mode="determinate")
+        self.progress_bar.set(0)
+        self.progress_bar.grid(row=6, column=0, sticky="ew", pady=(24, 10))
         self.progress_bar.grid_remove()
 
         status_label = ctk.CTkLabel(
-            main,
+            left_column,
             textvariable=self.status_var,
             wraplength=400,
             justify="left",
@@ -280,42 +272,95 @@ class SheetMusicApp:
             font=ctk.CTkFont(size=12),
             text_color=("gray35", "gray70"),
         )
-        status_label.grid(row=8, column=0, sticky="ew")
+        status_label.grid(row=7, column=0, sticky="ew")
+
+        preview_card = ctk.CTkFrame(right_column, corner_radius=12, fg_color=("gray90", "gray17"))
+        preview_card.grid(row=0, column=0, sticky="nsew")
+        preview_card.columnconfigure(0, weight=1)
+        preview_card.rowconfigure(0, weight=1)
+
+        self.preview_label = ctk.CTkLabel(
+            preview_card,
+            text="Transcribe audio to see a sheet music preview.",
+            font=ctk.CTkFont(size=13),
+            text_color=("gray45", "gray60"),
+            wraplength=440,
+            justify="center",
+        )
+        self.preview_label.grid(row=0, column=0, padx=24, pady=24, sticky="nsew")
+
+        self.preview_caption = ctk.CTkLabel(
+            preview_card,
+            text="",
+            font=ctk.CTkFont(size=11),
+            text_color=("gray45", "gray60"),
+        )
+        self.preview_caption.grid(row=1, column=0, padx=18, pady=(0, 16))
 
     def run(self) -> None:
         self.root.mainloop()
 
-    def _run_async(self, work, on_done, status_text: str, lock_widgets: list) -> None:
-        """Run `work()` on a background thread so the Tk main loop (and the
-        progress bar animation) keeps running during slow operations like
-        Demucs separation or a YouTube download. `on_done(result, error)` is
-        called back on the main thread once finished, with exactly one of
-        result/error set. `lock_widgets` are disabled for the duration (and
-        re-enabled after) to prevent starting a second operation — e.g.
-        loading new audio — while one that reads/writes self.audio is still
-        running on another thread.
+    def _run_async(self, work, on_done, status_text: str, lock_widgets: list,
+                    estimated_seconds: float | None = None) -> None:
+        """Run `work(report_progress)` on a background thread so the Tk main
+        loop (and the progress bar) keeps running during slow operations like
+        Demucs separation or a YouTube download. `work` should call
+        `report_progress(fraction)` (0.0-1.0) at meaningful checkpoints so the
+        bar shows real pipeline stages rather than an ambiguous animation.
+
+        If `estimated_seconds` is given (e.g. a fixed recording duration), a
+        timer independently advances the bar toward 0.85 over that many
+        seconds, since we know that wait's length in advance even though
+        `work` itself can't report progress mid-call.
+
+        `on_done(result, error)` is called back on the main thread once
+        finished, with exactly one of result/error set. `lock_widgets` are
+        disabled for the duration (and re-enabled after) to prevent starting
+        a second operation — e.g. loading new audio — while one that
+        reads/writes self.audio is still running on another thread.
         """
         for widget in lock_widgets:
             widget.configure(state="disabled")
         self.status_var.set(status_text)
+        self.progress_bar.set(0)
         self.progress_bar.grid()
-        self.progress_bar.start()
+
+        timer_state = {"active": True}
+
+        def report_progress(fraction: float) -> None:
+            self.root.after(0, lambda fraction=fraction: self.progress_bar.set(fraction))
+
+        if estimated_seconds and estimated_seconds > 0:
+            start_time = time.monotonic()
+
+            def tick() -> None:
+                if not timer_state["active"]:
+                    return
+                elapsed = time.monotonic() - start_time
+                self.progress_bar.set(min(0.85, elapsed / estimated_seconds * 0.85))
+                self.root.after(100, tick)
+
+            tick()
 
         def worker() -> None:
             try:
-                result = work()
+                result = work(report_progress)
             except Exception as exc:
                 # Bind exc as a default arg: except-clause variables are
                 # cleared when the block exits, so a plain closure over exc
                 # would see it unbound by the time this lambda actually runs.
-                self.root.after(0, lambda exc=exc: self._finish_async(lock_widgets, on_done, None, exc))
+                self.root.after(
+                    0, lambda exc=exc: self._finish_async(lock_widgets, timer_state, on_done, None, exc)
+                )
             else:
-                self.root.after(0, lambda: self._finish_async(lock_widgets, on_done, result, None))
+                self.root.after(
+                    0, lambda: self._finish_async(lock_widgets, timer_state, on_done, result, None)
+                )
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _finish_async(self, lock_widgets: list, on_done, result, error) -> None:
-        self.progress_bar.stop()
+    def _finish_async(self, lock_widgets: list, timer_state: dict, on_done, result, error) -> None:
+        timer_state["active"] = False
         self.progress_bar.grid_remove()
         for widget in lock_widgets:
             widget.configure(state="normal")
@@ -351,9 +396,11 @@ class SheetMusicApp:
             messagebox.showerror("Invalid Duration", str(exc))
             return
 
-        def work():
+        def work(report_progress):
             audio = audio_io.record_audio(duration, 44100)
+            report_progress(0.9)
             bpm, key_signature = self._analyze_tempo_and_key(audio, 44100)
+            report_progress(1.0)
             return audio, bpm, key_signature
 
         def on_done(result, error) -> None:
@@ -373,6 +420,7 @@ class SheetMusicApp:
         self._run_async(
             work, on_done, "Recording...",
             [self.record_button, self.load_button, self.import_button],
+            estimated_seconds=duration,
         )
 
     def load_audio_file(self) -> None:
@@ -389,9 +437,12 @@ class SheetMusicApp:
         if not path:
             return
 
-        def work():
+        def work(report_progress):
+            report_progress(0.1)
             audio, sample_rate = audio_io.load_audio_file(path, 44100)
+            report_progress(0.6)
             bpm, key_signature = self._analyze_tempo_and_key(audio, sample_rate)
+            report_progress(1.0)
             return audio, sample_rate, bpm, key_signature
 
         def on_done(result, error) -> None:
@@ -420,9 +471,10 @@ class SheetMusicApp:
             messagebox.showerror("No Link", "Paste a YouTube or Spotify link first.")
             return
 
-        def work():
-            result = import_from_url(url, 44100)
+        def work(report_progress):
+            result = import_from_url(url, 44100, progress_callback=report_progress)
             bpm, key_signature = self._analyze_tempo_and_key(result.audio, result.sample_rate)
+            report_progress(1.0)
             return result, bpm, key_signature
 
         def on_done(result, error) -> None:
@@ -463,22 +515,30 @@ class SheetMusicApp:
         audio, sample_rate = self.audio, self.sample_rate
         isolate = self.isolate_var.get() is True
 
-        def work():
+        def work(report_progress):
+            report_progress(0.05)
             if isolate:
                 melody_audio, melody_sr = isolate_melody(audio, sample_rate)
+                report_progress(0.55)
             else:
                 melody_audio, melody_sr = audio, sample_rate
+                report_progress(0.2)
+
             events = detect_notes(melody_audio, melody_sr)
+            report_progress(0.7)
+
             score = events_to_stream(
                 events,
                 bpm=bpm,
                 instrument_key=key,
                 key_signature=key_signature,
             )
+            report_progress(0.8)
 
             pdf_handle = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
             pdf_handle.close()
             rendered = render_score(score, pdf_handle.name)
+            report_progress(1.0)
 
             return score, len(events), rendered
 
@@ -503,7 +563,7 @@ class SheetMusicApp:
 
     def _display_preview(self, preview_png: bytes, page_count: int) -> None:
         image = Image.open(io.BytesIO(preview_png))
-        max_width, max_height = 440, 500
+        max_width, max_height = 560, 650
         scale = min(max_width / image.width, max_height / image.height, 1.0)
         display_size = (round(image.width * scale), round(image.height * scale))
 

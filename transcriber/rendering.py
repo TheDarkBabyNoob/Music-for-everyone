@@ -46,7 +46,7 @@ class RenderedScore:
     preview_png: bytes  # first page, cropped to content, for an in-app preview
 
 
-def _crop_to_content(png_bytes: bytes, margin: int = 24) -> bytes:
+def _crop_to_content(png_bytes: bytes, margin: int = 70) -> bytes:
     """Trim the mostly-blank page down to its actual notation, so a short
     transcription doesn't render as a tiny sliver on an otherwise-empty
     preview panel."""
@@ -111,7 +111,7 @@ def _render_musicxml_file(musicxml_path: str, pdf_path: str, preview_png_path: s
     return page_count
 
 
-def render_score(score: stream.Score, pdf_path: str, preview_dpi: int = 150) -> RenderedScore:
+def render_score(score: stream.Score, pdf_path: str, preview_dpi: int = 220) -> RenderedScore:
     """Safe to call from any thread: the actual verovio rendering runs in a
     subprocess so it always gets a genuine main thread."""
     with tempfile.TemporaryDirectory() as tmpdir:
