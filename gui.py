@@ -60,7 +60,6 @@ class SheetMusicApp:
 
         left_column = ctk.CTkFrame(main, fg_color="transparent", width=420)
         left_column.grid(row=0, column=0, sticky="n")
-        left_column.grid_propagate(False)
         left_column.columnconfigure(0, weight=1)
 
         right_column = ctk.CTkFrame(main, fg_color="transparent")
