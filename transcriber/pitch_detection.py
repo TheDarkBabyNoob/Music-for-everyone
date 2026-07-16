@@ -25,11 +25,32 @@ def freq_to_midi(freq: float) -> float:
     return 69.0 + 12.0 * np.log2(freq / 440.0)
 
 
+def _bridge_small_gaps(events: list[NoteEvent], max_gap_seconds: float) -> list[NoteEvent]:
+    """Real singing/playing is mostly legato. A brief gap between two
+    detected notes is almost always a pitch-tracking seam (a consonant, a
+    breath, a momentary dip in voicing confidence) rather than an
+    intentional rest, so close it by extending the earlier note up to the
+    next one instead of leaving a silent hole. Only gaps longer than
+    max_gap_seconds are trusted as real rests."""
+    if not events:
+        return events
+
+    bridged = [events[0]]
+    for event in events[1:]:
+        previous = bridged[-1]
+        gap = event.start - (previous.start + previous.duration)
+        if 0 < gap <= max_gap_seconds:
+            previous.duration += gap
+        bridged.append(event)
+    return bridged
+
+
 def detect_notes(audio: np.ndarray, sample_rate: int, fmin: float = 65.4,
                   fmax: float = 1046.5, frame_size: int = 2048, hop_size: int = 512,
                   min_note_seconds: float = 0.06,
                   pitch_merge_semitones: float = 0.6,
-                  max_voiced_gap_seconds: float = 0.08) -> list[NoteEvent]:
+                  max_voiced_gap_seconds: float = 0.08,
+                  bridge_gap_seconds: float = 0.18) -> list[NoteEvent]:
     """Analyze mono audio and return a list of detected NoteEvents (rests are
     the gaps between consecutive events, so silence is implicit).
 
@@ -85,4 +106,4 @@ def detect_notes(audio: np.ndarray, sample_rate: int, fmin: float = 65.4,
                                      duration=duration))
         i = j + 1
 
-    return events
+    return _bridge_small_gaps(events, bridge_gap_seconds)
