@@ -6,6 +6,7 @@ import numpy as np
 from music21.stream import Score
 
 import audio_io
+from transcriber.audio_analysis import estimate_key, estimate_tempo
 from transcriber.notation import events_to_stream, export_musicxml
 from transcriber.pitch_detection import detect_notes
 from transcriber.source_separation import isolate_melody
@@ -25,6 +26,7 @@ class SheetMusicApp:
         self.audio: np.ndarray | None = None
         self.sample_rate: int | None = None
         self.score: Score | None = None
+        self.detected_key_signature: tuple[str, str] | None = None
 
         self.duration_var = ctk.StringVar(value="8")
         self.bpm_var = ctk.StringVar(value="120")
@@ -221,6 +223,23 @@ class SheetMusicApp:
     def run(self) -> None:
         self.root.mainloop()
 
+    def _analyze_tempo_and_key(self) -> str:
+        """Best-effort local tempo/key detection (librosa, fully offline).
+
+        Updates bpm_var and detected_key_signature as a side effect. Returns a
+        short phrase to append to the status message, or '' if detection failed.
+        """
+        try:
+            bpm = estimate_tempo(self.audio, self.sample_rate)
+            tonic, mode = estimate_key(self.audio, self.sample_rate)
+        except Exception:
+            self.detected_key_signature = None
+            return ""
+
+        self.bpm_var.set(f"{bpm:.0f}")
+        self.detected_key_signature = (tonic, mode)
+        return f" Detected ~{bpm:.0f} BPM, key of {tonic} {mode}."
+
     def record_from_microphone(self) -> None:
         try:
             duration = float(self.duration_var.get())
@@ -242,7 +261,10 @@ class SheetMusicApp:
             self.score = None
             self.transcribe_button.configure(state="normal")
             self.save_button.configure(state="disabled")
-            self.status_var.set(f"Recorded {duration:.1f}s of audio.")
+            self.status_var.set("Analyzing tempo & key...")
+            self.root.update_idletasks()
+            suffix = self._analyze_tempo_and_key()
+            self.status_var.set(f"Recorded {duration:.1f}s of audio.{suffix}")
         except Exception as exc:
             self.status_var.set("Recording failed.")
             messagebox.showerror("Recording Failed", str(exc))
@@ -265,16 +287,29 @@ class SheetMusicApp:
         if not path:
             return
 
+        self.load_button.configure(state="disabled")
+        self.status_var.set("Loading...")
+        self.progress_bar.grid()
+        self.progress_bar.start()
+        self.root.update_idletasks()
+
         try:
             self.audio, self.sample_rate = audio_io.load_audio_file(path, 44100)
             self.score = None
             self.transcribe_button.configure(state="normal")
             self.save_button.configure(state="disabled")
             duration = len(self.audio) / self.sample_rate
-            self.status_var.set(f"Loaded {Path(path).name} ({duration:.1f}s).")
+            self.status_var.set("Analyzing tempo & key...")
+            self.root.update_idletasks()
+            suffix = self._analyze_tempo_and_key()
+            self.status_var.set(f"Loaded {Path(path).name} ({duration:.1f}s).{suffix}")
         except Exception as exc:
             self.status_var.set("Loading failed.")
             messagebox.showerror("Loading Failed", str(exc))
+        finally:
+            self.progress_bar.stop()
+            self.progress_bar.grid_remove()
+            self.load_button.configure(state="normal")
 
     def transcribe(self) -> None:
         if self.audio is None or self.sample_rate is None:
@@ -303,7 +338,12 @@ class SheetMusicApp:
 
             self.status_var.set("Transcribing...")
             events = detect_notes(melody_audio, melody_sr)
-            self.score = events_to_stream(events, bpm=bpm, key=key)
+            self.score = events_to_stream(
+                events,
+                bpm=bpm,
+                instrument_key=key,
+                key_signature=self.detected_key_signature,
+            )
             self.save_button.configure(state="normal")
             self.status_var.set(f"Transcription complete: detected {len(events)} notes.")
         except Exception as exc:

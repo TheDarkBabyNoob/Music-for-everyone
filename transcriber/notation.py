@@ -7,6 +7,7 @@ Supports two output keys:
 """
 
 from music21 import instrument, meter, note, stream, tempo
+from music21 import key as m21key
 
 from transcriber.pitch_detection import NoteEvent
 
@@ -20,19 +21,27 @@ def _quantize(quarter_length: float) -> float:
 
 
 def events_to_stream(events: list[NoteEvent], bpm: float = 120.0,
-                      key: str = "concert") -> stream.Score:
+                      instrument_key: str = "concert",
+                      key_signature: tuple[str, str] | None = None) -> stream.Score:
     """Build a music21 Score from detected note events.
 
-    `key` is "concert" (no transposition) or "trumpet" (written Bb trumpet part,
-    transposed up a major second from concert pitch).
+    `instrument_key` is "concert" (no transposition) or "trumpet" (written Bb
+    trumpet part, transposed up a major second from concert pitch).
+
+    `key_signature`, if given, is a (tonic_name, mode) pair, e.g. ("G", "major"),
+    describing the CONCERT-PITCH key. It is inserted before any transposition so
+    a trumpet part's key signature transposes along with its notes.
     """
-    if key not in ("concert", "trumpet"):
-        raise ValueError(f"Unknown key: {key!r}")
+    if instrument_key not in ("concert", "trumpet"):
+        raise ValueError(f"Unknown instrument_key: {instrument_key!r}")
 
     part = stream.Part()
     part.append(tempo.MetronomeMark(number=bpm))
     part.append(meter.TimeSignature("4/4"))
-    if key == "trumpet":
+    if key_signature is not None:
+        tonic, mode = key_signature
+        part.append(m21key.Key(tonic, mode))
+    if instrument_key == "trumpet":
         part.insert(0, instrument.Trumpet())
 
     seconds_per_quarter = 60.0 / bpm
@@ -53,7 +62,7 @@ def events_to_stream(events: list[NoteEvent], bpm: float = 120.0,
         part.append(n)
         cursor += duration_ql
 
-    if key == "trumpet":
+    if instrument_key == "trumpet":
         part = part.transpose("M2")
 
     score = stream.Score()

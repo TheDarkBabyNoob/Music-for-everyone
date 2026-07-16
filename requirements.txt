@@ -6,3 +6,4 @@ music21
 customtkinter
 torch
 demucs
+librosa
