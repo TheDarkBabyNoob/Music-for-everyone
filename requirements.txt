@@ -7,3 +7,6 @@ customtkinter
 torch
 demucs
 librosa
+yt-dlp
+imageio-ffmpeg
+requests

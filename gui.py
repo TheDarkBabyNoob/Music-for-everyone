@@ -10,6 +10,7 @@ from transcriber.audio_analysis import estimate_key, estimate_tempo
 from transcriber.notation import events_to_stream, export_musicxml
 from transcriber.pitch_detection import detect_notes
 from transcriber.source_separation import isolate_melody
+from transcriber.url_import import import_from_url
 
 
 ctk.set_appearance_mode("system")
@@ -29,6 +30,7 @@ class SheetMusicApp:
         self.detected_key_signature: tuple[str, str] | None = None
 
         self.duration_var = ctk.StringVar(value="8")
+        self.url_var = ctk.StringVar(value="")
         self.bpm_var = ctk.StringVar(value="120")
         self.instrument_var = ctk.StringVar(value="Concert Pitch")
         self.isolate_var = ctk.BooleanVar(value=True)
@@ -110,6 +112,23 @@ class SheetMusicApp:
             padx=18,
             pady=(0, 18),
         )
+
+        url_entry = ctk.CTkEntry(
+            audio_card,
+            textvariable=self.url_var,
+            placeholder_text="YouTube or Spotify link",
+        )
+        url_entry.grid(row=3, column=0, columnspan=2, sticky="ew", padx=(18, 10), pady=(0, 18))
+
+        self.import_button = ctk.CTkButton(
+            audio_card,
+            text="Import from URL",
+            command=self.import_from_url_clicked,
+            fg_color="transparent",
+            border_width=2,
+            text_color=("gray10", "gray90"),
+        )
+        self.import_button.grid(row=3, column=2, sticky="ew", padx=(0, 18), pady=(0, 18))
 
         settings_card = ctk.CTkFrame(main, corner_radius=12, fg_color=("gray90", "gray17"))
         settings_card.grid(row=3, column=0, sticky="ew", pady=(18, 0))
@@ -310,6 +329,38 @@ class SheetMusicApp:
             self.progress_bar.stop()
             self.progress_bar.grid_remove()
             self.load_button.configure(state="normal")
+
+    def import_from_url_clicked(self) -> None:
+        url = self.url_var.get().strip()
+        if not url:
+            messagebox.showerror("No Link", "Paste a YouTube or Spotify link first.")
+            return
+
+        self.import_button.configure(state="disabled")
+        self.status_var.set("Importing audio (this can take a moment)...")
+        self.progress_bar.grid()
+        self.progress_bar.start()
+        self.root.update_idletasks()
+
+        try:
+            result = import_from_url(url, 44100)
+            self.audio = result.audio
+            self.sample_rate = result.sample_rate
+            self.score = None
+            self.transcribe_button.configure(state="normal")
+            self.save_button.configure(state="disabled")
+            duration = len(self.audio) / self.sample_rate
+            self.status_var.set("Analyzing tempo & key...")
+            self.root.update_idletasks()
+            suffix = self._analyze_tempo_and_key()
+            self.status_var.set(f"Imported '{result.label}' ({duration:.1f}s).{suffix}")
+        except Exception as exc:
+            self.status_var.set("Import failed.")
+            messagebox.showerror("Import Failed", str(exc))
+        finally:
+            self.progress_bar.stop()
+            self.progress_bar.grid_remove()
+            self.import_button.configure(state="normal")
 
     def transcribe(self) -> None:
         if self.audio is None or self.sample_rate is None:
