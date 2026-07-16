@@ -8,6 +8,7 @@ from music21.stream import Score
 import audio_io
 from transcriber.notation import events_to_stream, export_musicxml
 from transcriber.pitch_detection import detect_notes
+from transcriber.source_separation import isolate_melody
 
 
 ctk.set_appearance_mode("system")
@@ -28,6 +29,7 @@ class SheetMusicApp:
         self.duration_var = ctk.StringVar(value="8")
         self.bpm_var = ctk.StringVar(value="120")
         self.instrument_var = ctk.StringVar(value="Concert Pitch")
+        self.isolate_var = ctk.BooleanVar(value=True)
         self.status_var = ctk.StringVar(value="Load or record audio to begin.")
 
         self._build_widgets()
@@ -144,6 +146,42 @@ class SheetMusicApp:
         )
         instrument_combo.grid(row=2, column=1, sticky="w", padx=(0, 18), pady=(0, 18))
 
+        isolate_checkbox = ctk.CTkCheckBox(
+            settings_card,
+            text="Isolate melody (remove drums/bass)",
+            variable=self.isolate_var,
+            onvalue=True,
+            offvalue=False,
+        )
+        isolate_checkbox.grid(
+            row=3,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            padx=18,
+            pady=(0, 8),
+        )
+
+        isolate_hint = ctk.CTkLabel(
+            settings_card,
+            text=(
+                "Uses AI source separation (Demucs). Slower, and downloads a model "
+                "the first time it runs. Turn off for a clean solo recording."
+            ),
+            font=ctk.CTkFont(size=11),
+            text_color=("gray45", "gray60"),
+            wraplength=330,
+            justify="left",
+        )
+        isolate_hint.grid(
+            row=4,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            padx=18,
+            pady=(0, 18),
+        )
+
         self.transcribe_button = ctk.CTkButton(
             main,
             text="Transcribe",
@@ -256,7 +294,15 @@ class SheetMusicApp:
                 raise ValueError("Tempo must be greater than zero.")
 
             key = self._notation_key()
-            events = detect_notes(self.audio, self.sample_rate)
+            if self.isolate_var.get() is True:
+                self.status_var.set("Isolating melody (this can take a while the first time)...")
+                self.root.update_idletasks()
+                melody_audio, melody_sr = isolate_melody(self.audio, self.sample_rate)
+            else:
+                melody_audio, melody_sr = self.audio, self.sample_rate
+
+            self.status_var.set("Transcribing...")
+            events = detect_notes(melody_audio, melody_sr)
             self.score = events_to_stream(events, bpm=bpm, key=key)
             self.save_button.configure(state="normal")
             self.status_var.set(f"Transcription complete: detected {len(events)} notes.")

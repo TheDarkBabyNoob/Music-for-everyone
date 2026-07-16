@@ -4,3 +4,5 @@ sounddevice
 soundfile
 music21
 customtkinter
+torch
+demucs
