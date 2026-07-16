@@ -8,6 +8,7 @@ from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 import numpy as np
+import sounddevice as sd
 from music21.stream import Score
 from PIL import Image
 
@@ -15,6 +16,7 @@ import audio_io
 from transcriber.audio_analysis import estimate_key, estimate_tempo
 from transcriber.notation import events_to_stream, export_musicxml
 from transcriber.pitch_detection import detect_notes
+from transcriber.playback import synthesize_score
 from transcriber.rendering import render_score
 from transcriber.source_separation import isolate_melody
 from transcriber.url_import import import_from_url
@@ -36,6 +38,7 @@ class SheetMusicApp:
         self.score: Score | None = None
         self.detected_key_signature: tuple[str, str] | None = None
         self.rendered_pdf_path: str | None = None
+        self.last_bpm: float | None = None
         self._preview_ctk_image: ctk.CTkImage | None = None
 
         self.duration_var = ctk.StringVar(value="8")
@@ -257,9 +260,34 @@ class SheetMusicApp:
         )
         self.export_pdf_button.grid(row=0, column=1, sticky="ew", padx=(6, 0))
 
+        playback_row = ctk.CTkFrame(left_column, fg_color="transparent")
+        playback_row.grid(row=6, column=0, sticky="ew", pady=(12, 0))
+        playback_row.columnconfigure(0, weight=1)
+        playback_row.columnconfigure(1, weight=0)
+
+        self.play_button = ctk.CTkButton(
+            playback_row,
+            text="▶  Play Preview (piano)",
+            command=self.play_preview,
+            state="disabled",
+        )
+        self.play_button.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+
+        self.stop_button = ctk.CTkButton(
+            playback_row,
+            text="Stop",
+            command=self.stop_preview,
+            state="disabled",
+            width=70,
+            fg_color="transparent",
+            border_width=2,
+            text_color=("gray10", "gray90"),
+        )
+        self.stop_button.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+
         self.progress_bar = ctk.CTkProgressBar(left_column, mode="determinate")
         self.progress_bar.set(0)
-        self.progress_bar.grid(row=6, column=0, sticky="ew", pady=(24, 10))
+        self.progress_bar.grid(row=7, column=0, sticky="ew", pady=(24, 10))
         self.progress_bar.grid_remove()
 
         status_label = ctk.CTkLabel(
@@ -271,7 +299,7 @@ class SheetMusicApp:
             font=ctk.CTkFont(size=12),
             text_color=("gray35", "gray70"),
         )
-        status_label.grid(row=7, column=0, sticky="ew")
+        status_label.grid(row=8, column=0, sticky="ew")
 
         preview_card = ctk.CTkFrame(right_column, corner_radius=12, fg_color=("gray90", "gray17"))
         preview_card.grid(row=0, column=0, sticky="nsew")
@@ -548,10 +576,12 @@ class SheetMusicApp:
                 return
             score, note_count, rendered = result
             self.score = score
+            self.last_bpm = bpm
             self.rendered_pdf_path = rendered.pdf_path
             self._display_preview(rendered.preview_png, rendered.page_count)
             self.save_button.configure(state="normal")
             self.export_pdf_button.configure(state="normal")
+            self.play_button.configure(state="normal")
             self.status_var.set(f"Transcription complete: detected {note_count} notes.")
 
         status_text = "Isolating melody (this can take a while the first time)..." if isolate else "Transcribing..."
@@ -623,6 +653,35 @@ class SheetMusicApp:
             messagebox.showinfo("PDF Exported", f"Saved to {path}")
         except Exception as exc:
             messagebox.showerror("Export Failed", str(exc))
+
+    def play_preview(self) -> None:
+        if self.score is None or self.last_bpm is None:
+            messagebox.showerror("No Score", "Transcribe audio before playing a preview.")
+            return
+
+        score = self.score
+        bpm = self.last_bpm
+
+        def work(report_progress):
+            report_progress(0.3)
+            audio = synthesize_score(score, bpm)
+            report_progress(1.0)
+            return audio
+
+        def on_done(result, error) -> None:
+            if error is not None:
+                messagebox.showerror("Playback Failed", str(error))
+                return
+            sd.play(result, 44100)
+            self.stop_button.configure(state="normal")
+            self.status_var.set("Playing preview (rough piano tones — for checking the transcription, not a real piano).")
+
+        self._run_async(work, on_done, "Rendering preview audio...", [self.play_button])
+
+    def stop_preview(self) -> None:
+        sd.stop()
+        self.stop_button.configure(state="disabled")
+        self.status_var.set("Playback stopped.")
 
     def _notation_key(self) -> str:
         if self.instrument_var.get() == "Bb Trumpet":
