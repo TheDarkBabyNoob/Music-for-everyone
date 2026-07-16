@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
@@ -242,21 +243,58 @@ class SheetMusicApp:
     def run(self) -> None:
         self.root.mainloop()
 
-    def _analyze_tempo_and_key(self) -> str:
-        """Best-effort local tempo/key detection (librosa, fully offline).
-
-        Updates bpm_var and detected_key_signature as a side effect. Returns a
-        short phrase to append to the status message, or '' if detection failed.
+    def _run_async(self, work, on_done, status_text: str, lock_widgets: list) -> None:
+        """Run `work()` on a background thread so the Tk main loop (and the
+        progress bar animation) keeps running during slow operations like
+        Demucs separation or a YouTube download. `on_done(result, error)` is
+        called back on the main thread once finished, with exactly one of
+        result/error set. `lock_widgets` are disabled for the duration (and
+        re-enabled after) to prevent starting a second operation — e.g.
+        loading new audio — while one that reads/writes self.audio is still
+        running on another thread.
         """
-        try:
-            bpm = estimate_tempo(self.audio, self.sample_rate)
-            tonic, mode = estimate_key(self.audio, self.sample_rate)
-        except Exception:
-            self.detected_key_signature = None
-            return ""
+        for widget in lock_widgets:
+            widget.configure(state="disabled")
+        self.status_var.set(status_text)
+        self.progress_bar.grid()
+        self.progress_bar.start()
 
+        def worker() -> None:
+            try:
+                result = work()
+            except Exception as exc:
+                self.root.after(0, lambda: self._finish_async(lock_widgets, on_done, None, exc))
+            else:
+                self.root.after(0, lambda: self._finish_async(lock_widgets, on_done, result, None))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_async(self, lock_widgets: list, on_done, result, error) -> None:
+        self.progress_bar.stop()
+        self.progress_bar.grid_remove()
+        for widget in lock_widgets:
+            widget.configure(state="normal")
+        on_done(result, error)
+
+    def _analyze_tempo_and_key(self, audio: np.ndarray, sample_rate: int) -> tuple[float, tuple[str, str] | None]:
+        """Best-effort local tempo/key detection (librosa, fully offline). Pure
+        computation, safe to call off the main thread — does not touch any
+        Tk widgets or variables."""
+        try:
+            bpm = estimate_tempo(audio, sample_rate)
+            tonic, mode = estimate_key(audio, sample_rate)
+        except Exception:
+            return 120.0, None
+        return bpm, (tonic, mode)
+
+    def _apply_detected_tempo_key(self, bpm: float, key_signature: tuple[str, str] | None) -> str:
+        """Update bpm_var/detected_key_signature and return a status suffix.
+        Must run on the main thread."""
+        if key_signature is None:
+            return ""
         self.bpm_var.set(f"{bpm:.0f}")
-        self.detected_key_signature = (tonic, mode)
+        self.detected_key_signature = key_signature
+        tonic, mode = key_signature
         return f" Detected ~{bpm:.0f} BPM, key of {tonic} {mode}."
 
     def record_from_microphone(self) -> None:
@@ -268,29 +306,29 @@ class SheetMusicApp:
             messagebox.showerror("Invalid Duration", str(exc))
             return
 
-        self.record_button.configure(state="disabled")
-        self.status_var.set("Recording...")
-        self.progress_bar.grid()
-        self.progress_bar.start()
-        self.root.update_idletasks()
+        def work():
+            audio = audio_io.record_audio(duration, 44100)
+            bpm, key_signature = self._analyze_tempo_and_key(audio, 44100)
+            return audio, bpm, key_signature
 
-        try:
-            self.audio = audio_io.record_audio(duration, 44100)
+        def on_done(result, error) -> None:
+            if error is not None:
+                self.status_var.set("Recording failed.")
+                messagebox.showerror("Recording Failed", str(error))
+                return
+            audio, bpm, key_signature = result
+            self.audio = audio
             self.sample_rate = 44100
             self.score = None
             self.transcribe_button.configure(state="normal")
             self.save_button.configure(state="disabled")
-            self.status_var.set("Analyzing tempo & key...")
-            self.root.update_idletasks()
-            suffix = self._analyze_tempo_and_key()
+            suffix = self._apply_detected_tempo_key(bpm, key_signature)
             self.status_var.set(f"Recorded {duration:.1f}s of audio.{suffix}")
-        except Exception as exc:
-            self.status_var.set("Recording failed.")
-            messagebox.showerror("Recording Failed", str(exc))
-        finally:
-            self.progress_bar.stop()
-            self.progress_bar.grid_remove()
-            self.record_button.configure(state="normal")
+
+        self._run_async(
+            work, on_done, "Recording...",
+            [self.record_button, self.load_button, self.import_button],
+        )
 
     def load_audio_file(self) -> None:
         path = filedialog.askopenfilename(
@@ -306,29 +344,30 @@ class SheetMusicApp:
         if not path:
             return
 
-        self.load_button.configure(state="disabled")
-        self.status_var.set("Loading...")
-        self.progress_bar.grid()
-        self.progress_bar.start()
-        self.root.update_idletasks()
+        def work():
+            audio, sample_rate = audio_io.load_audio_file(path, 44100)
+            bpm, key_signature = self._analyze_tempo_and_key(audio, sample_rate)
+            return audio, sample_rate, bpm, key_signature
 
-        try:
-            self.audio, self.sample_rate = audio_io.load_audio_file(path, 44100)
+        def on_done(result, error) -> None:
+            if error is not None:
+                self.status_var.set("Loading failed.")
+                messagebox.showerror("Loading Failed", str(error))
+                return
+            audio, sample_rate, bpm, key_signature = result
+            self.audio = audio
+            self.sample_rate = sample_rate
             self.score = None
             self.transcribe_button.configure(state="normal")
             self.save_button.configure(state="disabled")
-            duration = len(self.audio) / self.sample_rate
-            self.status_var.set("Analyzing tempo & key...")
-            self.root.update_idletasks()
-            suffix = self._analyze_tempo_and_key()
+            duration = len(audio) / sample_rate
+            suffix = self._apply_detected_tempo_key(bpm, key_signature)
             self.status_var.set(f"Loaded {Path(path).name} ({duration:.1f}s).{suffix}")
-        except Exception as exc:
-            self.status_var.set("Loading failed.")
-            messagebox.showerror("Loading Failed", str(exc))
-        finally:
-            self.progress_bar.stop()
-            self.progress_bar.grid_remove()
-            self.load_button.configure(state="normal")
+
+        self._run_async(
+            work, on_done, "Loading...",
+            [self.record_button, self.load_button, self.import_button],
+        )
 
     def import_from_url_clicked(self) -> None:
         url = self.url_var.get().strip()
@@ -336,75 +375,78 @@ class SheetMusicApp:
             messagebox.showerror("No Link", "Paste a YouTube or Spotify link first.")
             return
 
-        self.import_button.configure(state="disabled")
-        self.status_var.set("Importing audio (this can take a moment)...")
-        self.progress_bar.grid()
-        self.progress_bar.start()
-        self.root.update_idletasks()
-
-        try:
+        def work():
             result = import_from_url(url, 44100)
-            self.audio = result.audio
-            self.sample_rate = result.sample_rate
+            bpm, key_signature = self._analyze_tempo_and_key(result.audio, result.sample_rate)
+            return result, bpm, key_signature
+
+        def on_done(result, error) -> None:
+            if error is not None:
+                self.status_var.set("Import failed.")
+                messagebox.showerror("Import Failed", str(error))
+                return
+            import_result, bpm, key_signature = result
+            self.audio = import_result.audio
+            self.sample_rate = import_result.sample_rate
             self.score = None
             self.transcribe_button.configure(state="normal")
             self.save_button.configure(state="disabled")
             duration = len(self.audio) / self.sample_rate
-            self.status_var.set("Analyzing tempo & key...")
-            self.root.update_idletasks()
-            suffix = self._analyze_tempo_and_key()
-            self.status_var.set(f"Imported '{result.label}' ({duration:.1f}s).{suffix}")
-        except Exception as exc:
-            self.status_var.set("Import failed.")
-            messagebox.showerror("Import Failed", str(exc))
-        finally:
-            self.progress_bar.stop()
-            self.progress_bar.grid_remove()
-            self.import_button.configure(state="normal")
+            suffix = self._apply_detected_tempo_key(bpm, key_signature)
+            self.status_var.set(f"Imported '{import_result.label}' ({duration:.1f}s).{suffix}")
+
+        self._run_async(
+            work, on_done, "Importing audio (this can take a moment)...",
+            [self.record_button, self.load_button, self.import_button],
+        )
 
     def transcribe(self) -> None:
         if self.audio is None or self.sample_rate is None:
             messagebox.showerror("No Audio", "Load or record audio before transcribing.")
             return
 
-        previous_status = self.status_var.get()
-        self.status_var.set("Transcribing...")
-        self.transcribe_button.configure(state="disabled")
-        self.progress_bar.grid()
-        self.progress_bar.start()
-        self.root.update_idletasks()
-
         try:
             bpm = float(self.bpm_var.get())
             if bpm <= 0:
                 raise ValueError("Tempo must be greater than zero.")
+        except ValueError as exc:
+            messagebox.showerror("Invalid Tempo", str(exc))
+            return
 
-            key = self._notation_key()
-            if self.isolate_var.get() is True:
-                self.status_var.set("Isolating melody (this can take a while the first time)...")
-                self.root.update_idletasks()
-                melody_audio, melody_sr = isolate_melody(self.audio, self.sample_rate)
+        key = self._notation_key()
+        key_signature = self.detected_key_signature
+        audio, sample_rate = self.audio, self.sample_rate
+        isolate = self.isolate_var.get() is True
+
+        def work():
+            if isolate:
+                melody_audio, melody_sr = isolate_melody(audio, sample_rate)
             else:
-                melody_audio, melody_sr = self.audio, self.sample_rate
-
-            self.status_var.set("Transcribing...")
+                melody_audio, melody_sr = audio, sample_rate
             events = detect_notes(melody_audio, melody_sr)
-            self.score = events_to_stream(
+            score = events_to_stream(
                 events,
                 bpm=bpm,
                 instrument_key=key,
-                key_signature=self.detected_key_signature,
+                key_signature=key_signature,
             )
+            return score, len(events)
+
+        def on_done(result, error) -> None:
+            if error is not None:
+                self.status_var.set("Transcription failed.")
+                messagebox.showerror("Transcription Failed", str(error))
+                return
+            score, note_count = result
+            self.score = score
             self.save_button.configure(state="normal")
-            self.status_var.set(f"Transcription complete: detected {len(events)} notes.")
-        except Exception as exc:
-            self.status_var.set(previous_status)
-            messagebox.showerror("Transcription Failed", str(exc))
-        finally:
-            self.progress_bar.stop()
-            self.progress_bar.grid_remove()
-            if self.audio is not None and self.sample_rate is not None:
-                self.transcribe_button.configure(state="normal")
+            self.status_var.set(f"Transcription complete: detected {note_count} notes.")
+
+        status_text = "Isolating melody (this can take a while the first time)..." if isolate else "Transcribing..."
+        self._run_async(
+            work, on_done, status_text,
+            [self.record_button, self.load_button, self.import_button, self.transcribe_button],
+        )
 
     def save_sheet_music(self) -> None:
         if self.score is None:
