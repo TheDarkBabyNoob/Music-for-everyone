@@ -15,7 +15,7 @@ from PIL import Image
 import audio_io
 from transcriber.audio_analysis import estimate_key, estimate_tempo
 from transcriber.notation import events_to_stream, export_musicxml
-from transcriber.pitch_detection import detect_notes
+from transcriber.pitch_detection import detect_notes, merge_note_events
 from transcriber.playback import synthesize_score
 from transcriber.rendering import render_score
 from transcriber.source_separation import isolate_melody
@@ -545,14 +545,15 @@ class SheetMusicApp:
         def work(report_progress):
             report_progress(0.05)
             if isolate:
-                melody_audio, melody_sr = isolate_melody(audio, sample_rate)
-                report_progress(0.55)
+                isolated = isolate_melody(audio, sample_rate)
+                report_progress(0.5)
+                events = detect_notes(isolated.primary, isolated.sample_rate)
+                recovered_events = detect_notes(isolated.recovered, isolated.sample_rate)
+                events = merge_note_events(events, recovered_events)
+                report_progress(0.7)
             else:
-                melody_audio, melody_sr = audio, sample_rate
-                report_progress(0.2)
-
-            events = detect_notes(melody_audio, melody_sr)
-            report_progress(0.7)
+                events = detect_notes(audio, sample_rate)
+                report_progress(0.7)
 
             score = events_to_stream(
                 events,

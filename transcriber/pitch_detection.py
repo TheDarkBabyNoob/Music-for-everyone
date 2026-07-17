@@ -45,6 +45,36 @@ def _bridge_small_gaps(events: list[NoteEvent], max_gap_seconds: float) -> list[
     return bridged
 
 
+def merge_note_events(primary: list[NoteEvent], secondary: list[NoteEvent]) -> list[NoteEvent]:
+    """Fill gaps in `primary` using notes from `secondary`, without touching
+    anything primary already covers.
+
+    Used to add back pitched content recovered from Demucs' "drums" stem
+    (see source_separation.isolate_melody) only where the main signal has
+    nothing — filling real silence rather than competing with it. Summing
+    the two audio signals before transcribing instead (so the pitch
+    tracker sees both at once) made results worse: two simultaneous pitched
+    sources fight over one pitch estimate per instant.
+    """
+    if not secondary:
+        return primary
+    if not primary:
+        return secondary
+
+    combined = list(primary)
+    for event in secondary:
+        event_end = event.start + event.duration
+        overlaps = any(
+            event.start < p.start + p.duration and event_end > p.start
+            for p in primary
+        )
+        if not overlaps:
+            combined.append(event)
+
+    combined.sort(key=lambda e: e.start)
+    return combined
+
+
 def detect_notes(audio: np.ndarray, sample_rate: int, fmin: float = 65.4,
                   fmax: float = 1046.5, frame_size: int = 2048, hop_size: int = 512,
                   min_note_seconds: float = 0.06,
