@@ -45,6 +45,38 @@ def _bridge_small_gaps(events: list[NoteEvent], max_gap_seconds: float) -> list[
     return bridged
 
 
+def _split_on_onsets(events: list[NoteEvent], onset_times: np.ndarray,
+                      min_note_seconds: float, edge_margin_seconds: float = 0.03) -> list[NoteEvent]:
+    """Split any note that contains a detected onset partway through it.
+
+    Segmenting purely by pitch/voicing misses the extremely common case of
+    two (or more) repeated notes at the *same* pitch back to back — nothing
+    about the pitch changes, so they silently collapse into one held note,
+    which is a direct source of both dropped notes and wrong-looking
+    rhythm. Onset detection (spectral-flux based attack detection) catches
+    the actual re-attack regardless of whether pitch changed.
+    """
+    if len(onset_times) == 0:
+        return events
+
+    result: list[NoteEvent] = []
+    for event in events:
+        event_end = event.start + event.duration
+        interior = [
+            t for t in onset_times
+            if event.start + edge_margin_seconds < t < event_end - edge_margin_seconds
+        ]
+        if not interior:
+            result.append(event)
+            continue
+
+        boundaries = [event.start, *interior, event_end]
+        for start, end in zip(boundaries, boundaries[1:]):
+            if end - start >= min_note_seconds:
+                result.append(NoteEvent(midi=event.midi, start=start, duration=end - start))
+    return result
+
+
 def merge_note_events(primary: list[NoteEvent], secondary: list[NoteEvent]) -> list[NoteEvent]:
     """Fill gaps in `primary` using notes from `secondary`, without touching
     anything primary already covers.
@@ -135,5 +167,10 @@ def detect_notes(audio: np.ndarray, sample_rate: int, fmin: float = 65.4,
             events.append(NoteEvent(midi=float(np.median(pitches)), start=start_time,
                                      duration=duration))
         i = j + 1
+
+    onset_times = librosa.onset.onset_detect(
+        y=audio, sr=sample_rate, hop_length=hop_size, units="time"
+    )
+    events = _split_on_onsets(events, onset_times, min_note_seconds)
 
     return _bridge_small_gaps(events, bridge_gap_seconds)
