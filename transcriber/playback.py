@@ -35,13 +35,8 @@ def _synthesize_tone(midi: float, duration_seconds: float, sample_rate: int) -> 
     return wave
 
 
-def synthesize_score(score: stream.Score, bpm: float, sample_rate: int = 44100) -> np.ndarray:
-    """Render every note/rest in the score's first part to a mono audio
-    buffer, in order, at the given tempo."""
-    seconds_per_quarter = 60.0 / bpm
-    part = score.parts[0]
+def _synthesize_part(part: stream.Part, seconds_per_quarter: float, sample_rate: int) -> np.ndarray:
     elements = list(part.flatten().notesAndRests)
-
     total_seconds = sum(float(el.quarterLength) for el in elements) * seconds_per_quarter
     buffer = np.zeros(max(1, int(total_seconds * sample_rate)) + sample_rate)  # pad tail
 
@@ -59,8 +54,22 @@ def synthesize_score(score: stream.Score, bpm: float, sample_rate: int = 44100) 
 
         cursor_samples += n_samples
 
+    return buffer[:cursor_samples + sample_rate // 4]
+
+
+def synthesize_score(score: stream.Score, bpm: float, sample_rate: int = 44100) -> np.ndarray:
+    """Render every part in the score (mixed together if there's more than
+    one, e.g. a two-voice duet) to a mono audio buffer at the given tempo."""
+    seconds_per_quarter = 60.0 / bpm
+    part_buffers = [_synthesize_part(part, seconds_per_quarter, sample_rate) for part in score.parts]
+
+    length = max(len(b) for b in part_buffers)
+    buffer = np.zeros(length)
+    for part_buffer in part_buffers:
+        buffer[: len(part_buffer)] += part_buffer
+
     peak = np.max(np.abs(buffer))
     if peak > 0:
         buffer = buffer / peak * 0.7
 
-    return buffer[: cursor_samples + sample_rate // 4].astype(np.float32)
+    return buffer.astype(np.float32)

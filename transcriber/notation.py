@@ -20,22 +20,11 @@ def _quantize(quarter_length: float) -> float:
     return steps * QUANTIZE_UNIT
 
 
-def events_to_stream(events: list[NoteEvent], bpm: float = 120.0,
-                      instrument_key: str = "concert",
-                      key_signature: tuple[str, str] | None = None) -> stream.Score:
-    """Build a music21 Score from detected note events.
-
-    `instrument_key` is "concert" (no transposition) or "trumpet" (written Bb
-    trumpet part, transposed up a major second from concert pitch).
-
-    `key_signature`, if given, is a (tonic_name, mode) pair, e.g. ("G", "major"),
-    describing the CONCERT-PITCH key. It is inserted before any transposition so
-    a trumpet part's key signature transposes along with its notes.
-    """
-    if instrument_key not in ("concert", "trumpet"):
-        raise ValueError(f"Unknown instrument_key: {instrument_key!r}")
-
+def _build_part(events: list[NoteEvent], bpm: float, key_signature: tuple[str, str] | None,
+                 part_name: str | None = None) -> stream.Part:
     part = stream.Part()
+    if part_name is not None:
+        part.partName = part_name
     # Plain text rather than a numeric MetronomeMark: the latter renders its
     # note-value icon using a special embedded music font that our pure-Python
     # SVG-to-PDF pipeline (svglib/reportlab, no system Cairo/MuseScore) can't
@@ -45,8 +34,6 @@ def events_to_stream(events: list[NoteEvent], bpm: float = 120.0,
     if key_signature is not None:
         tonic, mode = key_signature
         part.append(m21key.Key(tonic, mode))
-    if instrument_key == "trumpet":
-        part.insert(0, instrument.Trumpet())
 
     seconds_per_quarter = 60.0 / bpm
     cursor = 0.0  # quarterLength position already written
@@ -66,11 +53,55 @@ def events_to_stream(events: list[NoteEvent], bpm: float = 120.0,
         part.append(n)
         cursor += duration_ql
 
+    return part
+
+
+def _apply_instrument(part: stream.Part, instrument_key: str) -> stream.Part:
     if instrument_key == "trumpet":
+        part.insert(0, instrument.Trumpet())
         part = part.transpose("M2")
+    return part
+
+
+def events_to_stream(events: list[NoteEvent], bpm: float = 120.0,
+                      instrument_key: str = "concert",
+                      key_signature: tuple[str, str] | None = None) -> stream.Score:
+    """Build a single-part music21 Score from detected note events.
+
+    `instrument_key` is "concert" (no transposition) or "trumpet" (written Bb
+    trumpet part, transposed up a major second from concert pitch).
+
+    `key_signature`, if given, is a (tonic_name, mode) pair, e.g. ("G", "major"),
+    describing the CONCERT-PITCH key. It is inserted before any transposition so
+    a trumpet part's key signature transposes along with its notes.
+    """
+    if instrument_key not in ("concert", "trumpet"):
+        raise ValueError(f"Unknown instrument_key: {instrument_key!r}")
+
+    part = _build_part(events, bpm, key_signature)
+    part = _apply_instrument(part, instrument_key)
 
     score = stream.Score()
     score.append(part)
+    return score
+
+
+def voice_events_to_stream(voice_events: list[list[NoteEvent]], bpm: float = 120.0,
+                            instrument_key: str = "concert",
+                            key_signature: tuple[str, str] | None = None) -> stream.Score:
+    """Build a multi-part music21 Score, one staff per voice — for duets/
+    harmony where two (or more) independent melodic lines were detected
+    separately (see transcriber.multi_pitch). Same instrument_key/
+    key_signature handling as events_to_stream, applied to every part.
+    """
+    if instrument_key not in ("concert", "trumpet"):
+        raise ValueError(f"Unknown instrument_key: {instrument_key!r}")
+
+    score = stream.Score()
+    for i, events in enumerate(voice_events, start=1):
+        part = _build_part(events, bpm, key_signature, part_name=f"Voice {i}")
+        part = _apply_instrument(part, instrument_key)
+        score.append(part)
     return score
 
 

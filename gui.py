@@ -14,7 +14,8 @@ from PIL import Image
 
 import audio_io
 from transcriber.audio_analysis import estimate_key, estimate_tempo
-from transcriber.notation import events_to_stream, export_musicxml
+from transcriber.multi_pitch import detect_notes_two_voices
+from transcriber.notation import events_to_stream, export_musicxml, voice_events_to_stream
 from transcriber.pitch_detection import detect_notes, merge_note_events
 from transcriber.playback import synthesize_score
 from transcriber.rendering import render_score
@@ -46,6 +47,7 @@ class SheetMusicApp:
         self.bpm_var = ctk.StringVar(value="120")
         self.instrument_var = ctk.StringVar(value="Concert Pitch")
         self.isolate_var = ctk.BooleanVar(value=True)
+        self.multi_voice_var = ctk.BooleanVar(value=False)
         self.status_var = ctk.StringVar(value="Load or record audio to begin.")
 
         self._build_widgets()
@@ -219,6 +221,45 @@ class SheetMusicApp:
         )
         isolate_hint.grid(
             row=4,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            padx=18,
+            pady=(0, 8),
+        )
+
+        multi_voice_checkbox = ctk.CTkCheckBox(
+            settings_card,
+            text="Advanced: detect two voices (duet/harmony)",
+            variable=self.multi_voice_var,
+            onvalue=True,
+            offvalue=False,
+        )
+        multi_voice_checkbox.grid(
+            row=5,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            padx=18,
+            pady=(0, 8),
+        )
+
+        multi_voice_hint = ctk.CTkLabel(
+            settings_card,
+            text=(
+                "For two independent simultaneous melodic lines (e.g. a duet), "
+                "written as two staves instead of one. Heuristic, not a trained "
+                "model: the primary line is usually solid, the second line is "
+                "rougher on dense/busy recordings. Roughly doubles processing "
+                "time; leave off for a single melody/vocal line."
+            ),
+            font=ctk.CTkFont(size=11),
+            text_color=("gray45", "gray60"),
+            wraplength=330,
+            justify="left",
+        )
+        multi_voice_hint.grid(
+            row=6,
             column=0,
             columnspan=2,
             sticky="w",
@@ -541,26 +582,35 @@ class SheetMusicApp:
         key_signature = self.detected_key_signature
         audio, sample_rate = self.audio, self.sample_rate
         isolate = self.isolate_var.get() is True
+        multi_voice = self.multi_voice_var.get() is True
 
         def work(report_progress):
             report_progress(0.05)
             if isolate:
                 isolated = isolate_melody(audio, sample_rate)
-                report_progress(0.5)
-                events = detect_notes(isolated.primary, isolated.sample_rate)
-                recovered_events = detect_notes(isolated.recovered, isolated.sample_rate)
-                events = merge_note_events(events, recovered_events)
-                report_progress(0.7)
+                report_progress(0.4)
+                melody_audio, melody_sr = isolated.primary, isolated.sample_rate
             else:
-                events = detect_notes(audio, sample_rate)
-                report_progress(0.7)
+                melody_audio, melody_sr = audio, sample_rate
+                report_progress(0.4)
 
-            score = events_to_stream(
-                events,
-                bpm=bpm,
-                instrument_key=key,
-                key_signature=key_signature,
-            )
+            if multi_voice:
+                voice1, voice2 = detect_notes_two_voices(melody_audio, melody_sr)
+                report_progress(0.7)
+                score = voice_events_to_stream(
+                    [voice1, voice2], bpm=bpm, instrument_key=key, key_signature=key_signature,
+                )
+                note_count = len(voice1) + len(voice2)
+            else:
+                events = detect_notes(melody_audio, melody_sr)
+                if isolate:
+                    recovered_events = detect_notes(isolated.recovered, isolated.sample_rate)
+                    events = merge_note_events(events, recovered_events)
+                report_progress(0.7)
+                score = events_to_stream(
+                    events, bpm=bpm, instrument_key=key, key_signature=key_signature,
+                )
+                note_count = len(events)
             report_progress(0.8)
 
             pdf_handle = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
@@ -568,7 +618,7 @@ class SheetMusicApp:
             rendered = render_score(score, pdf_handle.name)
             report_progress(1.0)
 
-            return score, len(events), rendered
+            return score, note_count, rendered
 
         def on_done(result, error) -> None:
             if error is not None:
@@ -585,7 +635,12 @@ class SheetMusicApp:
             self.play_button.configure(state="normal")
             self.status_var.set(f"Transcription complete: detected {note_count} notes.")
 
-        status_text = "Isolating melody (this can take a while the first time)..." if isolate else "Transcribing..."
+        if isolate:
+            status_text = "Isolating melody (this can take a while the first time)..."
+        elif multi_voice:
+            status_text = "Detecting two voices..."
+        else:
+            status_text = "Transcribing..."
         self._run_async(
             work, on_done, status_text,
             [self.record_button, self.load_button, self.import_button, self.transcribe_button],
